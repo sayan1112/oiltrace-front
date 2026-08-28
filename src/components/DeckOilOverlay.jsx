@@ -6,7 +6,7 @@ import "./DeckOilOverlay.css";
 /* =========================================================
    OILTRACE — LAGRANGIAN PARTICLE OVERLAY
 
-   This overlay deliberately renders the PARTICLES produced by
+   This overlay renders the PARTICLES produced by
    Simulation/oilSimulation.js. It does not generate a second,
    unrelated plume. That keeps:
 
@@ -32,7 +32,14 @@ class OilCanvasLayer {
     this._ctx = null;
     this._map = null;
     this._dpr = 1;
-    this._boundRedraw = this._redraw.bind(this);
+    this._width = 0;
+    this._height = 0;
+    this._rafId = null;
+
+    // Stable bound callbacks — created once in constructor so
+    // map.on / map.off always get the exact same function reference.
+    this._boundScheduleRedraw = this._scheduleRedraw.bind(this);
+    this._boundOnSettled = this._onSettled.bind(this);
   }
 
   addTo(map) {
@@ -43,6 +50,8 @@ class OilCanvasLayer {
     canvas.setAttribute("aria-hidden", "true");
     canvas.style.pointerEvents = "none";
 
+    // Append into the map container so the canvas is positioned by
+    // Leaflet's own CSS rules (position: relative on .leaflet-container).
     map.getContainer().appendChild(canvas);
 
     this._canvas = canvas;
@@ -51,24 +60,41 @@ class OilCanvasLayer {
     this._syncSize();
     this._redraw();
 
-    map.on(
-      "move zoom resize moveend zoomend viewreset",
-      this._boundRedraw
-    );
-    window.addEventListener("resize", this._boundRedraw);
+    // Strategy:
+    //   - "move" events fire continuously during pan AND during setView
+    //     animation. Batch them via RAF so we only redraw once per visual
+    //     frame. This is safe because the particles are geo-coordinates;
+    //     latLngToContainerPoint() always uses the current projection.
+    //
+    //   - "moveend", "zoomend", "viewreset": fire once when the map
+    //     settles. Do a final clean redraw via _onSettled() which cancels
+    //     any pending RAF first to avoid a duplicate frame.
+    //
+    //   - "resize": map container resized — re-sync canvas dimensions then
+    //     redraw via _onSettled().
+    //
+    // We intentionally do NOT listen to "flystart" — we no longer use
+    // flyTo() to move the map (replaced with setView), so the flystart
+    // event is never fired. Keeping it would be dead code.
+    map.on("move", this._boundScheduleRedraw);
+    map.on("moveend zoomend viewreset resize", this._boundOnSettled);
+    window.addEventListener("resize", this._boundOnSettled);
 
     return this;
   }
 
   remove() {
-    if (this._map) {
-      this._map.off(
-        "move zoom resize moveend zoomend viewreset",
-        this._boundRedraw
-      );
+    if (this._rafId) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
     }
 
-    window.removeEventListener("resize", this._boundRedraw);
+    if (this._map) {
+      this._map.off("move", this._boundScheduleRedraw);
+      this._map.off("moveend zoomend viewreset resize", this._boundOnSettled);
+    }
+
+    window.removeEventListener("resize", this._boundOnSettled);
 
     if (this._canvas?.parentNode) {
       this._canvas.parentNode.removeChild(this._canvas);
@@ -84,22 +110,59 @@ class OilCanvasLayer {
   setFrame({ particles = [], trails = [] } = {}) {
     this._particles = Array.isArray(particles) ? particles : [];
     this._trails = Array.isArray(trails) ? trails : [];
+    // Use _onSettled so any in-flight RAF is cancelled before scheduling
+    // a fresh one. Prevents a stale-frame flash when particle data changes.
+    this._onSettled();
+  }
+
+  // Called when the map fully settles (moveend/zoomend/resize/setFrame).
+  // Cancels any pending batched-move RAF and does a clean synchronous draw.
+  _onSettled() {
+    if (this._rafId) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
     this._redraw();
   }
 
+  // Called on every "move" event during panning / setView animation.
+  // Batches into at most one redraw per animation frame.
+  _scheduleRedraw() {
+    if (this._rafId) return;
+    this._rafId = requestAnimationFrame(() => {
+      this._rafId = null;
+      this._redraw();
+    });
+  }
+
   _syncSize() {
-    if (!this._map || !this._canvas || !this._ctx) return;
+    if (!this._map || !this._canvas || !this._ctx) return false;
 
     const size = this._map.getSize();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-    this._dpr = dpr;
-    this._canvas.style.width = `${size.x}px`;
-    this._canvas.style.height = `${size.y}px`;
-    this._canvas.width = Math.max(1, Math.round(size.x * dpr));
-    this._canvas.height = Math.max(1, Math.round(size.y * dpr));
+    const targetW = Math.max(1, Math.round(size.x * dpr));
+    const targetH = Math.max(1, Math.round(size.y * dpr));
 
-    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Only update canvas pixel dimensions if size or DPR actually changed.
+    // Setting canvas.width re-allocates GPU backbuffers and clears state.
+    if (
+      this._canvas.width !== targetW ||
+      this._canvas.height !== targetH ||
+      this._dpr !== dpr
+    ) {
+      this._dpr = dpr;
+      this._width = size.x;
+      this._height = size.y;
+      this._canvas.style.width = `${size.x}px`;
+      this._canvas.style.height = `${size.y}px`;
+      this._canvas.width = targetW;
+      this._canvas.height = targetH;
+      this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return true;
+    }
+
+    return false;
   }
 
   _redraw() {
@@ -109,10 +172,11 @@ class OilCanvasLayer {
 
     if (!canvas || !ctx || !map) return;
 
-    const cssWidth = canvas.width / this._dpr;
-    const cssHeight = canvas.height / this._dpr;
-
     this._syncSize();
+
+    const cssWidth = this._width || canvas.width / this._dpr;
+    const cssHeight = this._height || canvas.height / this._dpr;
+
     ctx.clearRect(0, 0, cssWidth, cssHeight);
 
     /* -------------------------------------------------------
@@ -161,7 +225,7 @@ class OilCanvasLayer {
         }
 
         if (hasPoint) {
-          ctx.strokeStyle = "rgba(59, 130, 246, 0.12)";
+          ctx.strokeStyle = "rgba(59, 130, 246, 0.14)";
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -177,40 +241,43 @@ class OilCanvasLayer {
        the current simulation frame. No independent animation is
        applied here, so the map scrub and particle field stay synced.
     ------------------------------------------------------- */
-    ctx.save();
+    if (this._particles.length) {
+      ctx.save();
 
-    for (const particle of this._particles) {
-      const lat = Number(particle?.latitude);
-      const lng = Number(particle?.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      for (const particle of this._particles) {
+        const lat = Number(particle?.latitude);
+        const lng = Number(particle?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
 
-      const point = map.latLngToContainerPoint(L.latLng(lat, lng));
-      if (
-        point.x < -10 ||
-        point.x > cssWidth + 10 ||
-        point.y < -10 ||
-        point.y > cssHeight + 10
-      ) {
-        continue;
+        const point = map.latLngToContainerPoint(L.latLng(lat, lng));
+        if (
+          point.x < -12 ||
+          point.x > cssWidth + 12 ||
+          point.y < -12 ||
+          point.y > cssHeight + 12
+        ) {
+          continue;
+        }
+
+        const [r, g, b] =
+          CATEGORY_COLORS[particle.category] || CATEGORY_COLORS.active;
+        const radius = Math.max(
+          1.5,
+          Math.min(5.8, Number(particle.radiusPixels) || 3.5)
+        );
+
+        // Slightly stronger particles near the centre make the plume read
+        // as a field of oil parcels instead of a solid polygon.
+        const alpha = particle.category === "stranded" ? 0.84 : 0.74;
+
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        ctx.fill();
       }
 
-      const [r, g, b] = CATEGORY_COLORS[particle.category] || CATEGORY_COLORS.active;
-      const radius = Math.max(
-        1.5,
-        Math.min(5.8, Number(particle.radiusPixels) || 3.5)
-      );
-
-      // Slightly stronger particles near the centre make the plume read
-      // as a field of oil parcels instead of a solid polygon.
-      const alpha = particle.category === "stranded" ? 0.82 : 0.72;
-
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
-      ctx.fill();
+      ctx.restore();
     }
-
-    ctx.restore();
   }
 }
 
@@ -222,7 +289,9 @@ export default function DeckOilOverlay({
   const map = useMap();
   const layerRef = useRef(null);
 
-  /* Mount exactly once for the current map/visibility state. */
+  /* Mount exactly once per map/enabled state.
+     The canvas is created once and reused for every render.
+     It is removed only when the component unmounts or enabled changes. */
   useEffect(() => {
     if (!map || !enabled) return undefined;
 

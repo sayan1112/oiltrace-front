@@ -224,6 +224,32 @@ function Sidebar({ activeItem, layers, onToggleLayer, onSelect, onTriggerBacktra
                   Vessels
                 </span>
               </label>
+
+              {/* SIMULATED OCEAN CURRENT */}
+              <label className="layer-option">
+                <input
+                  type="checkbox"
+                  checked={layers?.oceanCurrent ?? false}
+                  onChange={() => onToggleLayer?.("oceanCurrent")}
+                />
+                <span>
+                  <span className="layer-color" style={{ backgroundColor: "#0284c7" }} />
+                  Simulated Ocean Current
+                </span>
+              </label>
+
+              {/* SIMULATED WIND FIELD */}
+              <label className="layer-option">
+                <input
+                  type="checkbox"
+                  checked={layers?.windField ?? false}
+                  onChange={() => onToggleLayer?.("windField")}
+                />
+                <span>
+                  <span className="layer-color" style={{ backgroundColor: "#f59e0b" }} />
+                  Simulated Wind Field
+                </span>
+              </label>
             </div>
           )}
 

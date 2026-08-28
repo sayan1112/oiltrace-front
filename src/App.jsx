@@ -37,6 +37,8 @@ import "./App.css";
 import { scoreAllVessels } from "./utils/attributionScoring";
 import { generateOilSimulation } from "./Simulation/oilSimulation";
 import { backtrackOil } from "./Simulation/backtracking";
+import { defaultCurrentField } from "./Simulation/currentField";
+import { defaultWindField } from "./Simulation/windField";
 
 /* =========================================================
    LEAFLET MARKER FIX
@@ -245,14 +247,36 @@ function getIncidentPoints() {
 function FitMapToIncident({ enabled = true }) {
   const map = useMap();
 
+  // Initial fit on mount — run invalidateSize + fitBounds exactly once.
+  useEffect(() => {
+    map.invalidateSize();
+    const points = getIncidentPoints();
+    if (!points.length) return;
+
+    map.fitBounds(L.latLngBounds(points), {
+      paddingTopLeft: [70, 70],
+      paddingBottomRight: [390, 70],
+      maxZoom: 13,
+      animate: false,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  // When navigating BACK to the main map view, re-fit to show all features.
+  // Important: do NOT call invalidateSize here — that triggers a canvas
+  // resize event which causes the oil particle canvas to flash/redraw at
+  // the wrong time during vessel-click → activeItem transitions.
   useEffect(() => {
     if (!enabled) return;
     const points = getIncidentPoints();
     if (!points.length) return;
 
     map.fitBounds(L.latLngBounds(points), {
-      paddingTopLeft: [100, 80],
-      paddingBottomRight: [100, 80],
+      paddingTopLeft: [80, 80],
+      paddingBottomRight: [80, 80],
+      maxZoom: 13,
+      animate: true,
+      duration: 0.5,
     });
   }, [map, enabled]);
 
@@ -265,18 +289,33 @@ function FitMapToIncident({ enabled = true }) {
 
 function FocusOnVessel({ vessel }) {
   const map = useMap();
+  // Track which vessel ID we last focused so we don't re-trigger on
+  // unrelated re-renders (theme change, replay tick, etc.).
+  const lastFocusedIdRef = useRef(null);
 
   useEffect(() => {
     if (!vessel) return;
+
+    // Only fly if the vessel actually changed.
+    if (lastFocusedIdRef.current === vessel.id) return;
+    lastFocusedIdRef.current = vessel.id;
 
     const latitude = Number(vessel.position?.latitude);
     const longitude = Number(vessel.position?.longitude);
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
-    map.flyTo([latitude, longitude], Math.max(map.getZoom(), 10), {
-      duration: 0.7,
-      easeLinearity: 0.25,
+    // Use setView instead of flyTo.
+    // flyTo fires repeated `move` events throughout its animation, which
+    // race with the canvas `_flying` flag (flystart fires asynchronously)
+    // and cause 1-2 frames of particle jitter at the start of the animation.
+    // setView completes atomically in a single composite tick with no
+    // intermediate move events, so the canvas stays perfectly stable.
+    map.setView([latitude, longitude], Math.max(map.getZoom(), 10), {
+      animate: true,
+      duration: 0.6,
+      easeLinearity: 0.3,
+      noMoveStart: false,
     });
   }, [vessel, map]);
 
@@ -509,6 +548,93 @@ function IncidentPanel({ vessels, onSelectVessel, onClose, onTriggerBacktrack, i
     timeZone: "UTC",
   });
 
+  const lat = Number(incident?.centroid?.latitude ?? incident?.location?.latitude ?? 0);
+  const lng = Number(incident?.centroid?.longitude ?? incident?.location?.longitude ?? 0);
+  const latStr = `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? "N" : "S"}`;
+  const lngStr = `${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? "E" : "W"}`;
+  const formattedCoordinates = `${latStr} · ${lngStr}`;
+
+  const handleExportReport = () => {
+    const timestamp = new Date().toISOString().replace(/T/, " ").substring(0, 19) + " UTC";
+    const reportId = incident.id || "OT-INCIDENT-REPORT";
+
+    let report = `================================================================================\n`;
+    report += `OILTRACE — MARITIME INVESTIGATION REPORT\n`;
+    report += `Generated:      ${timestamp}\n`;
+    report += `Classification: OFFICIAL MARITIME REPORT (SIMULATED DATA DEMO)\n`;
+    report += `================================================================================\n\n`;
+
+    report += `1. INCIDENT IDENTIFICATION & LOCATION\n`;
+    report += `--------------------------------------------------------------------------------\n`;
+    report += `Incident ID:            ${incident.id || "—"}\n`;
+    report += `Status:                 ${incident.status || "Under Investigation"}\n`;
+    report += `Severity:               ${incident.severity || "High"}\n`;
+    report += `Spill Type:             ${incident.spillType || "Suspected oil slick"}\n`;
+    report += `Detected Date/Time:     ${detectedDateText} ${detectedTimeText} UTC\n`;
+    report += `Centroid Coordinates:   ${latStr}, ${lngStr} (${lat.toFixed(4)}, ${lng.toFixed(4)})\n`;
+    report += `Estimated Area:         ${incident.areaKm2} km²\n`;
+    report += `Detection Confidence:   ${Math.round((incident.detectionConfidence || 0) * 100)}%\n`;
+    report += `Satellite Platform:     ${incident.satellite?.platform || "Sentinel-1"} (${incident.satellite?.sensor || "SAR"})\n`;
+    report += `Product Image ID:       ${incident.satellite?.imageId || "DEMO-S1-001"}\n\n`;
+
+    report += `2. SOURCE ESTIMATION (HYDRODYNAMIC BACKTRACKING)\n`;
+    report += `--------------------------------------------------------------------------------\n`;
+    const sourceLat = incident.sourceRegion?.center?.latitude ?? lat;
+    const sourceLng = incident.sourceRegion?.center?.longitude ?? lng;
+    const sourceRadiusKm = ((incident.sourceRegion?.radiusMeters || 1800) / 1000).toFixed(2);
+    report += `Probable Source Center: ${Math.abs(sourceLat).toFixed(4)}° ${sourceLat >= 0 ? "N" : "S"}, ${Math.abs(sourceLng).toFixed(4)}° ${sourceLng >= 0 ? "E" : "W"}\n`;
+    report += `Uncertainty Radius:     ${sourceRadiusKm} km (${incident.sourceRegion?.radiusMeters || 1800} m)\n`;
+    report += `Source Type:            ${incident.sourceRegion?.type || "Uncertainty region"}\n\n`;
+
+    report += `3. CANDIDATE VESSEL ATTRIBUTION RANKING\n`;
+    report += `--------------------------------------------------------------------------------\n`;
+    vessels.forEach((v, idx) => {
+      const conf = Math.round((v.attributionConfidence || 0) * 100);
+      report += `Rank ${v.candidateRank || idx + 1}: ${v.name} [ID: ${v.id}]\n`;
+      report += `  Type:                 ${v.type} | Flag: ${v.flag || "—"}\n`;
+      report += `  Position:             ${Number(v.position?.latitude || 0).toFixed(4)}° N, ${Number(v.position?.longitude || 0).toFixed(4)}° E\n`;
+      report += `  Speed / Heading:      ${v.speedKnots || 0} kts | ${v.heading || 0}°\n`;
+      report += `  Attribution Score:    ${conf}% (${conf >= 70 ? "HIGH PROBABILITY" : conf >= 40 ? "MEDIUM PROBABILITY" : "LOW PROBABILITY"})\n`;
+      if (v.evidence) {
+        report += `  Evidence Breakdown:\n`;
+        if (v.evidence.spatial) report += `    • Spatial Proximity:   ${Math.round((v.evidence.spatial.score || 0) * 100)}% (${v.evidence.spatial.label})\n`;
+        if (v.evidence.temporal) report += `    • Temporal Overlap:    ${Math.round((v.evidence.temporal.score || 0) * 100)}% (${v.evidence.temporal.label})\n`;
+        if (v.evidence.trajectory) report += `    • Trajectory Match:    ${Math.round((v.evidence.trajectory.score || 0) * 100)}% (${v.evidence.trajectory.label})\n`;
+        if (v.evidence.drift) report += `    • Drift Counterfactual:${Math.round((v.evidence.drift.score || 0) * 100)}% (${v.evidence.drift.label})\n`;
+        if (v.evidence.aisReliability) report += `    • AIS Coverage Status: ${v.evidence.aisReliability.status} (${v.evidence.aisReliability.label})\n`;
+      }
+      report += `\n`;
+    });
+
+    report += `4. INCIDENT TIMELINE\n`;
+    report += `--------------------------------------------------------------------------------\n`;
+    (incident.timeline || []).forEach((event) => {
+      report += `${event.time} UTC  -  ${event.label}\n`;
+    });
+    report += `\n`;
+
+    report += `5. DRIFT & WEATHER MODEL PARAMETERS (SIMULATED)\n`;
+    report += `--------------------------------------------------------------------------------\n`;
+    report += `Ocean Current:          Simulated Northwest Coastal Drift (Deterministic Field, ~1.8 m/s)\n`;
+    report += `Atmospheric Wind:       Simulated NNW 5.2 m/s (Standard 3.0% windage coefficient)\n`;
+    report += `Lagrangian Dispersion:  OpenDrift / OpenOil modeled particle advection & backward tracking\n\n`;
+
+    report += `================================================================================\n`;
+    report += `DISCLAIMER: All vessel positions, sensor data, and attribution scores in this\n`;
+    report += `report are simulated for evaluation of the OilTrace automated attribution engine.\n`;
+    report += `================================================================================\n`;
+
+    const blob = new Blob([report], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `OILTRACE-REPORT-${reportId}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <aside
       className="oiltrace-context-panel incident-context-panel"
@@ -520,14 +646,43 @@ function IncidentPanel({ vessels, onSelectVessel, onClose, onTriggerBacktrack, i
           <h2>{incident.id}</h2>
         </div>
 
-        <button
-          type="button"
-          className="context-close-button"
-          onClick={onClose}
-          aria-label="Close incident panel"
-        >
-          ×
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            type="button"
+            className="incident-export-button"
+            onClick={handleExportReport}
+            title="Export full incident investigation report"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "5px 9px",
+              background: "rgba(15, 23, 42, 0.05)",
+              border: "1px solid rgba(15, 23, 42, 0.12)",
+              borderRadius: "6px",
+              fontSize: "10px",
+              fontWeight: "700",
+              cursor: "pointer",
+              color: "inherit",
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <span>Report</span>
+          </button>
+
+          <button
+            type="button"
+            className="context-close-button"
+            onClick={onClose}
+            aria-label="Close incident panel"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <div className="incident-status-row">
@@ -538,7 +693,11 @@ function IncidentPanel({ vessels, onSelectVessel, onClose, onTriggerBacktrack, i
       <section className="context-section">
         <span className="context-section-label">INCIDENT</span>
         <h3 className="incident-title">{incident.spillType}</h3>
-        <p className="incident-time">
+        <div style={{ marginTop: "6px", display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(37, 99, 235, 0.08)", padding: "4px 8px", borderRadius: "5px", fontSize: "11px", fontWeight: "700", fontFamily: "ui-monospace, monospace", color: "#1d4ed8" }}>
+          <span>📍</span>
+          <span>{formattedCoordinates}</span>
+        </div>
+        <p className="incident-time" style={{ marginTop: "6px" }}>
           {detectedDateText} · {detectedTimeText} UTC
         </p>
       </section>
@@ -675,6 +834,8 @@ function LegendPanel({ onClose }) {
             <div className="legend-item"><span className="legend-spill-boundary" /><span>Detected spill boundary</span></div>
             <div className="legend-item"><span className="legend-spill-centroid" /><span>Spill centroid</span></div>
             <div className="legend-item"><span className="legend-source-region" /><span>Source uncertainty region</span></div>
+            <div className="legend-item"><span className="legend-line" style={{ backgroundColor: "#0284c7" }} /><span>Simulated ocean current</span></div>
+            <div className="legend-item"><span className="legend-line" style={{ backgroundColor: "#f59e0b" }} /><span>Simulated wind field</span></div>
           </div>
         </section>
 
@@ -721,6 +882,62 @@ function App() {
     () => generateOilSimulation({ incident }),
     []
   );
+
+  /* =======================================================
+     SIMULATED OCEAN CURRENT & WIND FIELD VECTORS
+  ======================================================= */
+
+  const simulatedCurrentVectors = useMemo(() => {
+    const vectors = [];
+    for (let lat = 18.42; lat <= 18.64; lat += 0.035) {
+      for (let lng = 72.80; lng <= 73.02; lng += 0.035) {
+        const vel = defaultCurrentField.getVelocity(lat, lng, 0);
+        const rad = ((90 - vel.direction) * Math.PI) / 180;
+        const len = 0.014;
+        const endLat = lat + Math.sin(rad) * len * 0.9;
+        const endLng = lng + Math.cos(rad) * len;
+        const headLen = 0.004;
+        const headAngle1 = rad + Math.PI * 0.82;
+        const headAngle2 = rad - Math.PI * 0.82;
+        const h1 = [endLat + Math.sin(headAngle1) * headLen * 0.9, endLng + Math.cos(headAngle1) * headLen];
+        const h2 = [endLat + Math.sin(headAngle2) * headLen * 0.9, endLng + Math.cos(headAngle2) * headLen];
+        vectors.push({
+          id: `curr-${lat.toFixed(3)}-${lng.toFixed(3)}`,
+          positions: [[lat, lng], [endLat, endLng]],
+          arrowHead: [h1, [endLat, endLng], h2],
+          speed: vel.speed,
+          direction: vel.direction,
+        });
+      }
+    }
+    return vectors;
+  }, []);
+
+  const simulatedWindVectors = useMemo(() => {
+    const vectors = [];
+    for (let lat = 18.44; lat <= 18.62; lat += 0.035) {
+      for (let lng = 72.82; lng <= 73.00; lng += 0.035) {
+        const wind = defaultWindField.getVelocity(lat, lng, 0);
+        const rad = ((90 - wind.direction) * Math.PI) / 180;
+        const len = 0.015;
+        const endLat = lat + Math.sin(rad) * len * 0.9;
+        const endLng = lng + Math.cos(rad) * len;
+        const headLen = 0.004;
+        const headAngle1 = rad + Math.PI * 0.82;
+        const headAngle2 = rad - Math.PI * 0.82;
+        const h1 = [endLat + Math.sin(headAngle1) * headLen * 0.9, endLng + Math.cos(headAngle1) * headLen];
+        const h2 = [endLat + Math.sin(headAngle2) * headLen * 0.9, endLng + Math.cos(headAngle2) * headLen];
+        vectors.push({
+          id: `wind-${lat.toFixed(3)}-${lng.toFixed(3)}`,
+          positions: [[lat, lng], [endLat, endLng]],
+          arrowHead: [h1, [endLat, endLng], h2],
+          speed: wind.speed,
+          direction: wind.direction,
+        });
+      }
+    }
+    return vectors;
+  }, []);
 
   /* =======================================================
      DYNAMIC BACKTRACK ENGINE STATE
@@ -792,6 +1009,8 @@ function App() {
     sourceRegion: true,
     trajectories: true,
     vessels: true,
+    oceanCurrent: false,
+    windField: false,
   });
 
   const toggleLayer = (layer) => {
@@ -939,11 +1158,11 @@ function App() {
      SELECTION & NAVIGATION
   ======================================================= */
 
-  const handleSelectVessel = (vessel) => {
+  const handleSelectVessel = useCallback((vessel) => {
     if (!vessel) return;
     setSelectedVesselId(vessel.id);
     setActiveItem("vessels");
-  };
+  }, []);
 
   const handleDeselect = () => {
     setSelectedVesselId(null);
@@ -1008,9 +1227,74 @@ function App() {
       <MapContainer center={leafletCentroid} zoom={10} className="map">
         {/* BASE MAP */}
         <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={19}
         />
+
+        {/* SIMULATED OCEAN CURRENT LAYER */}
+        {layers.oceanCurrent && simulatedCurrentVectors.map((vec) => (
+          <Fragment key={vec.id}>
+            <Polyline
+              positions={vec.positions}
+              pathOptions={{
+                color: "#0284c7",
+                weight: 2,
+                opacity: 0.8,
+                lineCap: "round",
+              }}
+            >
+              <Tooltip sticky direction="top">
+                <strong>Simulated Ocean Current</strong>
+                <br />
+                Speed: {vec.speed.toFixed(2)} m/s ({(vec.speed * 1.94384).toFixed(1)} kts)
+                <br />
+                Heading: {Math.round(vec.direction)}° (Northwest coastal drift)
+              </Tooltip>
+            </Polyline>
+            <Polyline
+              positions={vec.arrowHead}
+              pathOptions={{
+                color: "#0284c7",
+                weight: 2,
+                opacity: 0.85,
+                lineCap: "round",
+              }}
+            />
+          </Fragment>
+        ))}
+
+        {/* SIMULATED WIND FIELD LAYER */}
+        {layers.windField && simulatedWindVectors.map((vec) => (
+          <Fragment key={vec.id}>
+            <Polyline
+              positions={vec.positions}
+              pathOptions={{
+                color: "#f59e0b",
+                weight: 2,
+                opacity: 0.8,
+                lineCap: "round",
+              }}
+            >
+              <Tooltip sticky direction="top">
+                <strong>Simulated Wind Field</strong>
+                <br />
+                Speed: {vec.speed.toFixed(1)} m/s ({(vec.speed * 1.94384).toFixed(1)} kts)
+                <br />
+                Heading: {Math.round(vec.direction)}° (NNW wind, 3.0% oil windage)
+              </Tooltip>
+            </Polyline>
+            <Polyline
+              positions={vec.arrowHead}
+              pathOptions={{
+                color: "#f59e0b",
+                weight: 2,
+                opacity: 0.85,
+                lineCap: "round",
+              }}
+            />
+          </Fragment>
+        ))}
 
         {/* OIL PARTICLE FIELD (LAGRANGIAN PARTICLE DOTS — Leaflet canvas) */}
         {layers.spill && (

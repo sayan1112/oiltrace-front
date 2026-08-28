@@ -55,34 +55,58 @@
 ===================================================== */
 
 .incident-panel-header {
-  padding: 20px;
-
+  padding: 18px 20px;
   background: #ffffff;
-
   border-bottom: 1px solid #e5e7eb;
+}
+
+.incident-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.incident-export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #1e293b;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 100ms ease;
+  white-space: nowrap;
+}
+
+.incident-export-button:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  transform: translateY(-1px);
+}
+
+.incident-export-button:active {
+  transform: translateY(0);
 }
 
 .incident-kicker {
   display: block;
-
-  margin-bottom: 5px;
-
+  margin-bottom: 3px;
   color: #64748b;
-
   font-size: 9px;
   font-weight: 800;
-
   letter-spacing: 1.5px;
 }
 
 .incident-panel-header h2 {
   margin: 0;
-
   color: #172033;
-
   font-size: 20px;
   font-weight: 800;
-
   letter-spacing: -0.2px;
 }
 
@@ -92,89 +116,98 @@
 
 .incident-status-row {
   display: flex;
-
   align-items: center;
-
   gap: 7px;
-
   margin-top: 9px;
 }
 
 .incident-status {
-  padding: 5px 8px;
-
+  padding: 4px 8px;
   border-radius: 5px;
-
   background: #eef5ff;
-
   color: #315f91;
-
   font-size: 8px;
   font-weight: 800;
-
   letter-spacing: 0.5px;
-
   text-transform: uppercase;
 }
 
 .incident-severity {
-  padding: 5px 8px;
-
+  padding: 4px 8px;
   border-radius: 5px;
-
   background: #fef2f2;
-
   color: #b42318;
-
   font-size: 8px;
   font-weight: 800;
-
   letter-spacing: 0.5px;
-
   text-transform: uppercase;
 }
 
 /* =====================================================
-   DESCRIPTION
+   DESCRIPTION & COORDINATES
 ===================================================== */
 
 .incident-block {
-  padding: 17px 20px;
-
+  padding: 16px 20px;
   border-bottom: 1px solid #e5e7eb;
 }
 
 .incident-description {
   color: #26364e;
-
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
+}
+
+.incident-coordinates-card {
+  margin-top: 10px;
+  padding: 8px 11px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.incident-coordinates-card .coord-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+}
+
+.incident-coordinates-card .coord-label svg {
+  color: #0284c7;
+}
+
+.incident-coordinates-card .coord-values strong {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: 0.2px;
 }
 
 .incident-detected {
   display: flex;
   justify-content: space-between;
   align-items: center;
-
   gap: 10px;
-
-  margin-top: 9px;
+  margin-top: 10px;
 }
 
 .incident-detected span {
   color: #94a3b8;
-
   font-size: 9px;
   font-weight: 700;
-
   text-transform: uppercase;
-
   letter-spacing: 0.7px;
 }
 
 .incident-detected strong {
   color: #64748b;
-
   font-size: 10px;
   font-weight: 700;
 }
@@ -542,4 +575,131 @@
 
     width: auto;
   }
+}
+
+/* =====================================================
+   DARK THEME
+===================================================== */
+
+.app-dark .incident-panel {
+  background: rgba(19, 31, 48, 0.97);
+  border-color: #314257;
+  color: #f3f7fb;
+  box-shadow:
+    0 20px 45px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.app-dark .incident-panel-header {
+  background: #152234;
+  border-color: #27384c;
+}
+
+.app-dark .incident-panel-header h2 {
+  color: #f3f7fb;
+}
+
+.app-dark .incident-kicker {
+  color: #8fa0b5;
+}
+
+.app-dark .incident-export-button {
+  background: #1e2e44;
+  border-color: #334862;
+  color: #e2e8f0;
+}
+
+.app-dark .incident-export-button:hover {
+  background: #273b56;
+  border-color: #4d9cff;
+}
+
+.app-dark .incident-status {
+  background: #1a3250;
+  color: #60a5fa;
+}
+
+.app-dark .incident-severity {
+  background: #3b1820;
+  color: #f87171;
+}
+
+.app-dark .incident-block {
+  border-color: #27384c;
+}
+
+.app-dark .incident-description {
+  color: #e2e8f0;
+}
+
+.app-dark .incident-coordinates-card {
+  background: #111b2b;
+  border-color: #27384c;
+}
+
+.app-dark .incident-coordinates-card .coord-label {
+  color: #8fa0b5;
+}
+
+.app-dark .incident-coordinates-card .coord-values strong {
+  color: #38bdf8;
+}
+
+.app-dark .incident-detected strong {
+  color: #cbd5e1;
+}
+
+.app-dark .incident-section-title {
+  color: #94a3b8;
+}
+
+.app-dark .incident-metric {
+  background: #152234;
+  border-color: #27384c;
+}
+
+.app-dark .incident-metric strong {
+  color: #f3f7fb;
+}
+
+.app-dark .incident-investigation-card {
+  background: #152234;
+  border-color: #27384c;
+}
+
+.app-dark .incident-candidate-count {
+  border-color: #27384c;
+}
+
+.app-dark .incident-candidate-count > strong {
+  color: #f3f7fb;
+}
+
+.app-dark .incident-top-candidate > strong {
+  color: #f3f7fb;
+}
+
+.app-dark .incident-confidence {
+  border-color: #27384c;
+}
+
+.app-dark .incident-confidence strong {
+  color: #60a5fa;
+}
+
+.app-dark .timeline-content strong {
+  color: #f3f7fb;
+}
+
+.app-dark .timeline-content span {
+  color: #94a3b8;
+}
+
+.app-dark .incident-data-note {
+  background: #111b2b;
+  border-color: #27384c;
+}
+
+.app-dark .incident-data-note strong {
+  color: #cbd5e1;
 }

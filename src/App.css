@@ -124,13 +124,27 @@ button {
   height: 100%;
   background: #dce5ed;
   font-family: inherit;
+  overflow: hidden;
+}
+
+.app-dark .leaflet-container {
+  background: #0b1422;
+}
+
+.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.leaflet-tile-pane {
+  pointer-events: none;
 }
 
 .leaflet-control-container {
   z-index: 900;
 }
 
-/* Deck.gl canvas:
+/* Oil particle canvas:
    above tiles, below Leaflet interaction layers */
 .oiltrace-oil-canvas {
   position: absolute !important;
@@ -157,11 +171,10 @@ button {
    MAP POLYGON / SOURCE REGION
 ========================================================= */
 
-.leaflet-interactive {
+path.leaflet-interactive {
   transition:
-    fill-opacity 160ms ease,
-    stroke-width 160ms ease,
-    opacity 160ms ease;
+    fill-opacity 140ms ease,
+    stroke-width 140ms ease;
 }
 
 .leaflet-overlay-pane path {
