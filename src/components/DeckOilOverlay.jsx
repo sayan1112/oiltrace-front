@@ -60,22 +60,8 @@ class OilCanvasLayer {
     this._syncSize();
     this._redraw();
 
-    // Strategy:
-    //   - "move" events fire continuously during pan AND during setView
-    //     animation. Batch them via RAF so we only redraw once per visual
-    //     frame. This is safe because the particles are geo-coordinates;
-    //     latLngToContainerPoint() always uses the current projection.
-    //
-    //   - "moveend", "zoomend", "viewreset": fire once when the map
-    //     settles. Do a final clean redraw via _onSettled() which cancels
-    //     any pending RAF first to avoid a duplicate frame.
-    //
-    //   - "resize": map container resized — re-sync canvas dimensions then
-    //     redraw via _onSettled().
-    //
-    // We intentionally do NOT listen to "flystart" — we no longer use
-    // flyTo() to move the map (replaced with setView), so the flystart
-    // event is never fired. Keeping it would be dead code.
+    // Listen to continuous move events (mouse drag / pan) batched via requestAnimationFrame
+    // so particles move smoothly 1:1 with the mouse and map tiles.
     map.on("move", this._boundScheduleRedraw);
     map.on("moveend zoomend viewreset resize", this._boundOnSettled);
     window.addEventListener("resize", this._boundOnSettled);

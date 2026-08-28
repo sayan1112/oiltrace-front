@@ -2,6 +2,7 @@ import {
   Fragment,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useCallback,
 } from "react";
@@ -246,38 +247,32 @@ function getIncidentPoints() {
 
 function FitMapToIncident({ enabled = true }) {
   const map = useMap();
+  const isFirstMountRef = useRef(true);
 
-  // Initial fit on mount — run invalidateSize + fitBounds exactly once.
   useEffect(() => {
-    map.invalidateSize();
     const points = getIncidentPoints();
     if (!points.length) return;
 
-    map.fitBounds(L.latLngBounds(points), {
-      paddingTopLeft: [70, 70],
-      paddingBottomRight: [390, 70],
-      maxZoom: 13,
-      animate: false,
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      map.invalidateSize();
+      map.fitBounds(L.latLngBounds(points), {
+        paddingTopLeft: [80, 80],
+        paddingBottomRight: [80, 80],
+        maxZoom: 12,
+        animate: false,
+      });
+      return;
+    }
 
-  // When navigating BACK to the main map view, re-fit to show all features.
-  // Important: do NOT call invalidateSize here — that triggers a canvas
-  // resize event which causes the oil particle canvas to flash/redraw at
-  // the wrong time during vessel-click → activeItem transitions.
-  useEffect(() => {
-    if (!enabled) return;
-    const points = getIncidentPoints();
-    if (!points.length) return;
-
-    map.fitBounds(L.latLngBounds(points), {
-      paddingTopLeft: [80, 80],
-      paddingBottomRight: [80, 80],
-      maxZoom: 13,
-      animate: true,
-      duration: 0.5,
-    });
+    if (enabled) {
+      map.fitBounds(L.latLngBounds(points), {
+        paddingTopLeft: [80, 80],
+        paddingBottomRight: [80, 80],
+        maxZoom: 12,
+        animate: false,
+      });
+    }
   }, [map, enabled]);
 
   return null;
@@ -305,17 +300,24 @@ function FocusOnVessel({ vessel }) {
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
-    // Use setView instead of flyTo.
-    // flyTo fires repeated `move` events throughout its animation, which
-    // race with the canvas `_flying` flag (flystart fires asynchronously)
-    // and cause 1-2 frames of particle jitter at the start of the animation.
-    // setView completes atomically in a single composite tick with no
-    // intermediate move events, so the canvas stays perfectly stable.
+    // Use setView with animate:false.
+    //
+    // WHY NOT ANIMATE:
+    // The oil particle canvas sits outside Leaflet's .leaflet-map-pane
+    // transform hierarchy — it's a sibling, not a child. During any
+    // animated map movement (flyTo, setView+animate, panTo+animate),
+    // Leaflet applies CSS translate3d() to .leaflet-map-pane. The tiles
+    // move smoothly via the browser compositor, but latLngToContainerPoint()
+    // returns the FINAL destination coordinates immediately (Leaflet updates
+    // its internal state before starting the CSS transition). So the canvas
+    // redraws particles at their final screen positions while tiles are
+    // still mid-slide → visible "jump" / jitter.
+    //
+    // animate:false makes the transition atomic: one coordinate update,
+    // one moveend, one redraw, zero visual mismatch. This is how
+    // professional GIS/maritime intelligence tools handle feature focusing.
     map.setView([latitude, longitude], Math.max(map.getZoom(), 10), {
-      animate: true,
-      duration: 0.6,
-      easeLinearity: 0.3,
-      noMoveStart: false,
+      animate: false,
     });
   }, [vessel, map]);
 
@@ -1224,7 +1226,7 @@ function App() {
       />
 
       {/* SINGLE MAP CONTAINER */}
-      <MapContainer center={leafletCentroid} zoom={10} className="map">
+      <MapContainer center={[18.525, 72.92]} zoom={11} className="map">
         {/* BASE MAP */}
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
